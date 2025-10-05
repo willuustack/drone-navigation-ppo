@@ -4,7 +4,7 @@ import os
 
 
 # --- Create the trainer instance ---
-# These classes are now imported from drone_nav.py
+# These classes are imported from drone_lib.py
 drone_config = DroneConfig()
 env_config = EnvironmentConfig()
 training_config = TrainingConfig()

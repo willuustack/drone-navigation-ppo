@@ -412,7 +412,10 @@ class CurriculumTrainer:
         print(f"\n💾 Balanced model saved to {save_path}")
 
     def evaluate(self, num_episodes=5, render=False):
-        print(f"\n📊 Evaluating for {num_episodes} episodes...")
+        """
+        Placeholder for evaluation logic. Not yet implemented.
+        """
+        raise NotImplementedError("The evaluate method is not implemented yet.")
 
     def animate_episode(self, num_episodes=5, interval=40):
         """
@@ -451,7 +454,6 @@ class CurriculumTrainer:
 
             def update(frame):
                 drone_path.set_data(path_array[:frame, 0], path_array[:frame, 1])
-                # THIS IS THE CORRECTED LINE
                 drone_marker.set_data([path_array[frame, 0]], [path_array[frame, 1]])
                 return drone_path, drone_marker
 

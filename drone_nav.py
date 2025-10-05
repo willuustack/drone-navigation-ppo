@@ -7,7 +7,7 @@ if __name__ == "__main__":
     drone_config = DroneConfig()
     env_config = EnvironmentConfig()
     training_config = TrainingConfig()
-    curriculum_config = CurriculumConfig()
+    curriculum_config = CurriculumConfig(max_goals=5)
     trainer = CurriculumTrainer(drone_config, env_config, training_config, curriculum_config)
     
     show_viz = input("Show occasional training visualizations? (y/n, default n): ").lower() == 'y'

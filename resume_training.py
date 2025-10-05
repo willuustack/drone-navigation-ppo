@@ -1,7 +1,8 @@
 # In resume_training.py
 
-from Desktop.drone_nav_project.drone_lib import *
+from drone_lib import *
 import os
+import sys
 
 # --- Configuration (must match the "Balanced" settings) ---
 drone_config = DroneConfig()
@@ -21,7 +22,7 @@ else:
     # This is a safety check. If the model doesn't exist, we can't resume.
     print(f"❌ ERROR: Model not found at {model_path}. Cannot resume training.")
     print("Please run 'python3 drone_nav.py' to perform the initial training first.")
-    exit() # Exit the script if there's nothing to resume.
+    sys.exit() # Exit the script if there's nothing to resume.
 
 # --- Continue Training ---
 # Let's train for another 750 episodes to master Stage 2 & 3
