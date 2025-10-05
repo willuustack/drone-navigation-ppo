@@ -1,23 +1,31 @@
-from drone_nav import *
+# Change this line in watch_drone.py
+from drone_lib import DroneConfig, EnvironmentConfig, TrainingConfig, CurriculumConfig, CurriculumTrainer
 import os
-import matplotlib
-matplotlib.use('MacOSX')
 
-# Load trained model
+
+# --- Create the trainer instance ---
+# These classes are now imported from drone_nav.py
 drone_config = DroneConfig()
 env_config = EnvironmentConfig()
 training_config = TrainingConfig()
-curriculum_config = CurriculumConfig(max_goals=5)
+curriculum_config = CurriculumConfig()
+trainer = CurriculumTrainer(drone_config, env_config, training_config, curriculum_config)
 
-trainer = CurriculumTrainer(
-    drone_config, env_config, training_config, curriculum_config
-)
 
-# Load saved model
-save_path = os.path.expanduser("~/Desktop/drone_nav_project/drone_navigation_ppo.pth")
-trainer.agent.load(save_path)
-print("✅ Model loaded successfully!")
+# --- Define the model path ---
+model_path = "models/drone_navigation_balanced.pth"
 
-# Watch the drone in action with live animation
-print("\n🎬 Starting live animation...")
-trainer.animate_episode(num_episodes=3, interval=30)
+
+# --- Load the trained model ---
+if os.path.exists(model_path):
+    print(f"✅ Loading balanced model from {model_path}")
+    trainer.agent.load(model_path)
+    
+    # --- Watch the drone in action ---
+    print("\n🎬 Starting balanced navigation animation!")
+    # This will now call the fully implemented animation method
+    trainer.animate_episode(num_episodes=5, interval=40) 
+else:
+    print(f"❌ Model not found at {model_path}.")
+    print("Please run 'python3 drone_nav.py' to train the model first.")
+
