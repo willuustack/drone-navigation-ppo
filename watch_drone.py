@@ -24,7 +24,7 @@ if os.path.exists(model_path):
     # --- Watch the drone in action ---
     print("\n🎬 Starting balanced navigation animation!")
     # This will now call the fully implemented animation method
-    trainer.animate_episode(num_episodes=5, interval=40) 
+    trainer.animate_episode(num_episodes=10, interval=40) 
 else:
     print(f"❌ Model not found at {model_path}.")
     print("Please run 'python3 drone_nav.py' to train the model first.")

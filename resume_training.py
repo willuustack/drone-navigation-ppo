@@ -26,7 +26,7 @@ else:
 
 # --- Continue Training ---
 # Let's train for another 750 episodes to master Stage 2 & 3
-additional_episodes = 10000
+additional_episodes = 50000
 print(f"\n🚀 Continuing training for an additional {additional_episodes} episodes...")
 
 # Ask the user if they want to see visualizations

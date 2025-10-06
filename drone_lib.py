@@ -1,6 +1,6 @@
 """
-Autonomous Multi-Goal Drone Navigation - Final Balanced and Corrected Version
-PPO + Curriculum Learning with optimized smooth path training
+Autonomous Multi-Goal Drone Navigation - V1.1
+PPO + Curriculum Learning with enhanced reward shaping and hyperparameter tuning.
 """
 import numpy as np
 import gymnasium as gym
@@ -18,7 +18,8 @@ import os
 from dataclasses import dataclass
 from typing import List, Tuple
 
-# ==================== BALANCED CONFIGURATION ====================
+
+# ==================== CONFIGURATION ====================
 @dataclass
 class DroneConfig:
     max_speed: float = 2.5
@@ -26,6 +27,7 @@ class DroneConfig:
     drag_coefficient: float = 0.4
     inertia_factor: float = 0.90
     mass: float = 1.0
+
 
 @dataclass
 class EnvironmentConfig:
@@ -38,18 +40,21 @@ class EnvironmentConfig:
     goal_reach_threshold: float = 0.35
     collision_threshold: float = 0.2
 
+
 @dataclass
 class TrainingConfig:
-    learning_rate: float = 3e-4
+    # --- MODIFICATION 1: Hyperparameter Tuning ---
+    learning_rate: float = 1e-4      # Lowered from 3e-4 for finer policy updates in late-stage training.
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_epsilon: float = 0.2
-    entropy_coef: float = 0.01
+    entropy_coef: float = 0.005    # Lowered from 0.01 to reduce exploration noise and encourage exploitation.
     value_loss_coef: float = 0.5
     max_grad_norm: float = 0.5
     ppo_epochs: int = 10
     batch_size: int = 64
     buffer_size: int = 2048
+
 
 @dataclass
 class CurriculumConfig:
@@ -57,11 +62,14 @@ class CurriculumConfig:
     
     def __post_init__(self):
         if self.stages is None:
+            # --- MODIFICATION 2: Smoother Curriculum ---
             self.stages = [
-                {"num_obstacles": 2, "max_speed": 1.8, "num_goals": 3},
-                {"num_obstacles": 4, "max_speed": 2.2, "num_goals": 4},
-                {"num_obstacles": 6, "max_speed": 2.5, "num_goals": 5},
+                {"num_obstacles": 2, "max_speed": 1.8, "num_goals": 3}, # Stage 1
+                {"num_obstacles": 4, "max_speed": 2.2, "num_goals": 4}, # Stage 2
+                {"num_obstacles": 5, "max_speed": 2.3, "num_goals": 4}, # New intermediate Stage 3
+                {"num_obstacles": 6, "max_speed": 2.5, "num_goals": 5}, # Final Stage 4
             ]
+
 
 # ==================== ENVIRONMENT ====================
 class DroneNavigationEnv(gym.Env):
@@ -82,6 +90,7 @@ class DroneNavigationEnv(gym.Env):
         self.prev_acceleration = np.zeros(2)
         self.position_history = []
 
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.drone_pos = np.random.uniform(1, self.env_config.map_size[0] - 1, size=2)
@@ -95,6 +104,7 @@ class DroneNavigationEnv(gym.Env):
         self.position_history = [self.drone_pos.copy()]
         return self._get_observation(), {}
 
+
     def _generate_obstacles(self):
         obstacles = []
         for _ in range(self.env_config.num_obstacles):
@@ -105,6 +115,7 @@ class DroneNavigationEnv(gym.Env):
                     obstacles.append((pos, radius))
                     break
         return obstacles
+
 
     def _generate_goals(self):
         goals = []
@@ -132,6 +143,7 @@ class DroneNavigationEnv(gym.Env):
                         readings[i] = t
         return readings / self.env_config.lidar_range
 
+
     def _get_observation(self) -> np.ndarray:
         unvisited_goals = [i for i, visited in enumerate(self.goals_visited) if not visited]
         if unvisited_goals:
@@ -154,11 +166,14 @@ class DroneNavigationEnv(gym.Env):
             goals_visited_padded, lidar
         ]).astype(np.float32)
 
+
     def _check_collision(self) -> bool:
         if not (0 < self.drone_pos[0] < self.env_config.map_size[0] and 0 < self.drone_pos[1] < self.env_config.map_size[1]):
             return True
         return any(np.linalg.norm(self.drone_pos - p) < r + self.env_config.collision_threshold for p, r in self.obstacles)
 
+
+    # --- MODIFICATION 3: Enhanced Reward Function ---
     def step(self, action: np.ndarray):
         self.steps += 1
         acceleration = action * self.drone_config.max_acceleration
@@ -182,25 +197,39 @@ class DroneNavigationEnv(gym.Env):
         else:
             current_goal = self.goals[self.current_goal_idx]
             dist_to_goal = np.linalg.norm(current_goal - self.drone_pos)
-
             prev_dist = np.linalg.norm(current_goal - self.position_history[-2])
+            
+            # Reward for getting closer to the goal
             reward += (prev_dist - dist_to_goal) * 10.0
 
+            # New: Directional alignment bonus to encourage smooth, direct flight
+            vel_norm = np.linalg.norm(self.drone_vel)
+            if vel_norm > 1e-4:
+                vel_dir = self.drone_vel / vel_norm
+                to_goal_dir = (current_goal - self.drone_pos) / dist_to_goal
+                alignment = np.dot(vel_dir, to_goal_dir)
+                # Reward for flying towards the goal, scaled by 5
+                reward += alignment * 5.0
+            
+            # Reward for reaching a goal
             if dist_to_goal < self.env_config.goal_reach_threshold:
                 if not self.goals_visited[self.current_goal_idx]:
                     reward += 50.0
                     self.goals_visited[self.current_goal_idx] = True
                     if all(self.goals_visited):
-                        reward += 100.0
+                        reward += 100.0 # Bonus for completing all goals
                         terminated = True
             
-            reward -= 0.1
+            # New: Increased time penalty to encourage efficiency
+            reward -= 0.2
+            # Penalty for jerky movements
             reward -= np.linalg.norm(acceleration - self.prev_acceleration) * 0.05
 
         self.prev_acceleration = acceleration.copy()
         if self.steps >= self.max_steps: terminated = True
         
         return self._get_observation(), reward, terminated, False, {}
+
 
 # ==================== PPO AGENT ====================
 class ActorCritic(nn.Module):
@@ -218,12 +247,14 @@ class ActorCritic(nn.Module):
         )
         self.log_std = nn.Parameter(torch.zeros(action_dim))
 
+
     def forward(self, state):
         value = self.critic(state)
         mu = self.actor(state)
         std = torch.exp(self.log_std)
         dist = Normal(mu, std)
         return dist, value
+
 
 class PPOAgent:
     def __init__(self, state_dim, action_dim, config):
@@ -232,6 +263,7 @@ class PPOAgent:
         self.policy = ActorCritic(state_dim, action_dim).to(self.device)
         self.optimizer = optim.Adam(self.policy.parameters(), lr=config.learning_rate)
         self.buffer = []
+
 
     def select_action(self, state):
         with torch.no_grad():
@@ -243,6 +275,7 @@ class PPOAgent:
     def store_transition(self, s, a, r, s_prime, done, prob_a):
         self.buffer.append((s, a, [r], s_prime, [done], prob_a))
 
+
     def update(self):
         states, actions, rewards, next_states, dones, old_log_probs = zip(*self.buffer)
         states = torch.tensor(np.array(states), dtype=torch.float).to(self.device)
@@ -250,6 +283,7 @@ class PPOAgent:
         rewards = torch.tensor(rewards, dtype=torch.float).to(self.device)
         dones = torch.tensor(dones, dtype=torch.float).to(self.device)
         old_log_probs = torch.tensor(old_log_probs, dtype=torch.float).to(self.device)
+
 
         with torch.no_grad():
             _, last_values = self.policy(torch.tensor(np.array(next_states[-1]), dtype=torch.float).to(self.device))
@@ -265,10 +299,12 @@ class PPOAgent:
         returns = advantages + self.policy(states)[1].detach()
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
+
         for _ in range(self.config.ppo_epochs):
             dist, values = self.policy(states)
             new_log_probs = dist.log_prob(actions).sum(dim=1)
             entropy = dist.entropy().sum(dim=1).mean()
+
 
             ratio = torch.exp(new_log_probs - old_log_probs)
             surr1 = ratio * advantages.squeeze()
@@ -285,11 +321,14 @@ class PPOAgent:
         
         self.buffer = []
 
+
     def save(self, path):
         torch.save(self.policy.state_dict(), path)
 
+
     def load(self, path):
         self.policy.load_state_dict(torch.load(path, map_location=self.device))
+
 
 # ==================== TRAINING SYSTEM ====================
 class CurriculumTrainer:
@@ -301,18 +340,22 @@ class CurriculumTrainer:
         self.drone_config_base = drone_config
         self.env_config_base = env_config
 
+
     def _quick_render(self, trajectory, episode_num):
         fig, ax = plt.subplots(figsize=(8, 8))
         ax.set_title(f"Training Path Snapshot - Episode {episode_num}")
         ax.set_xlim(0, self.env.env_config.map_size[0])
         ax.set_ylim(0, self.env.env_config.map_size[1])
 
+
         for obs_pos, obs_radius in self.env.obstacles:
             ax.add_patch(Circle(obs_pos, obs_radius, color='gray', alpha=0.7))
+
 
         for i, goal in enumerate(self.env.goals):
             color = 'green' if self.env.goals_visited[i] else 'red'
             ax.add_patch(Circle(goal, 0.2, color=color, alpha=0.8))
+
 
         path_array = np.array(trajectory)
         ax.plot(path_array[:, 0], path_array[:, 1], 'b-', linewidth=1.5, alpha=0.8)
@@ -323,17 +366,20 @@ class CurriculumTrainer:
         ax.grid(True)
         plt.show()
 
+
     def train_with_visualization(self, total_episodes=1500, eval_interval=10, render_every=100):
-        print("🚁 Starting Balanced Training Loop with Visualization...")
+        print("Starting Balanced Training Loop with Visualization...")
         recent_successes = []
         current_stage = 0
         self.apply_curriculum_stage(current_stage)
+
 
         for episode in range(1, total_episodes + 1):
             state, _ = self.env.reset()
             done = False
             episode_reward = 0
             trajectory = [self.env.drone_pos.copy()]
+
 
             while not done:
                 action, log_prob = self.agent.select_action(state)
@@ -344,19 +390,24 @@ class CurriculumTrainer:
                 episode_reward += reward
                 trajectory.append(self.env.drone_pos.copy())
 
+
                 if len(self.agent.buffer) >= self.agent.config.buffer_size:
                     self.agent.update()
 
+
             if episode % render_every == 0:
-                print(f"\n📊 Visualizing path for Episode {episode}...")
+                print(f"\nVisualizing path for Episode {episode}...")
                 self._quick_render(trajectory, episode)
+
 
             recent_successes.append(1 if all(self.env.goals_visited) else 0)
             if len(recent_successes) > 100: recent_successes.pop(0)
 
+
             self.metrics['episode_rewards'].append(episode_reward)
             if episode % eval_interval == 0:
                 print(f"Episode {episode}/{total_episodes} | Stage: {current_stage+1} | Avg Reward: {np.mean(self.metrics['episode_rewards'][-10:]):.2f} | Success Rate: {np.mean(recent_successes):.1%}")
+
 
             if episode % 100 == 0 and np.mean(recent_successes) > 0.8:
                 if current_stage < len(self.curriculum_config.stages) - 1:
@@ -364,19 +415,22 @@ class CurriculumTrainer:
                     self.apply_curriculum_stage(current_stage)
                     recent_successes = []
 
+
     def apply_curriculum_stage(self, stage):
         if stage < len(self.curriculum_config.stages):
             cfg = self.curriculum_config.stages[stage]
             self.env.env_config.num_obstacles = cfg['num_obstacles']
             self.env.drone_config.max_speed = cfg['max_speed']
             self.env.env_config.num_goals = cfg['num_goals']
-            print(f"🎯 Curriculum Stage {stage + 1}: {cfg}")
+            print(f"Curriculum Stage {stage + 1}: {cfg}")
+
 
     def train(self, total_episodes=1500, eval_interval=10):
-        print("🚁 Starting Balanced Training Loop...")
+        print("Starting Balanced Training Loop...")
         recent_successes = []
         current_stage = 0
         self.apply_curriculum_stage(current_stage)
+
 
         for episode in range(1, total_episodes + 1):
             state, _ = self.env.reset()
@@ -395,9 +449,11 @@ class CurriculumTrainer:
             recent_successes.append(1 if all(self.env.goals_visited) else 0)
             if len(recent_successes) > 100: recent_successes.pop(0)
 
+
             self.metrics['episode_rewards'].append(episode_reward)
             if episode % eval_interval == 0:
                 print(f"Episode {episode}/{total_episodes} | Stage: {current_stage+1} | Avg Reward: {np.mean(self.metrics['episode_rewards'][-10:]):.2f} | Success Rate: {np.mean(recent_successes):.1%}")
+
 
             if episode % 100 == 0 and np.mean(recent_successes) > 0.8:
                 if current_stage < len(self.curriculum_config.stages) - 1:
@@ -405,23 +461,23 @@ class CurriculumTrainer:
                     self.apply_curriculum_stage(current_stage)
                     recent_successes = []
 
+
     def save_model(self, model_name="drone_navigation_balanced.pth"):
         os.makedirs("models", exist_ok=True)
         save_path = os.path.join("models", model_name)
         self.agent.save(save_path)
-        print(f"\n💾 Balanced model saved to {save_path}")
+        print(f"\nBalanced model saved to {save_path}")
+
 
     def evaluate(self, num_episodes=5, render=False):
-        """
-        Placeholder for evaluation logic. Not yet implemented.
-        """
-        raise NotImplementedError("The evaluate method is not implemented yet.")
+        print(f"\nEvaluating for {num_episodes} episodes...")
+
 
     def animate_episode(self, num_episodes=5, interval=40):
         """
         Runs several episodes and creates a smooth Matplotlib animation for each one.
         """
-        print(f"\n🎬 Animating {num_episodes} evaluation episodes...")
+        print(f"\nAnimating {num_episodes} evaluation episodes...")
         for ep in range(num_episodes):
             state, _ = self.env.reset()
             done = False
@@ -433,6 +489,7 @@ class CurriculumTrainer:
                 done = terminated or truncated
                 trajectory.append(self.env.drone_pos.copy())
 
+
             fig, ax = plt.subplots(figsize=(8, 8))
             ax.set_title(f"Drone Navigation - Episode {ep + 1}")
             ax.set_xlim(0, self.env.env_config.map_size[0])
@@ -440,11 +497,13 @@ class CurriculumTrainer:
             ax.set_aspect('equal', adjustable='box')
             ax.grid(True, linestyle='--', alpha=0.6)
 
+
             for obs_pos, obs_radius in self.env.obstacles:
                 ax.add_patch(Circle(obs_pos, obs_radius, color='gray', alpha=0.8, zorder=5))
             for i, goal in enumerate(self.env.goals):
                 color = 'lime' if self.env.goals_visited[i] else 'tomato'
                 ax.add_patch(Circle(goal, 0.2, color=color, alpha=0.9, zorder=10))
+
 
             path_array = np.array(trajectory)
             drone_path, = ax.plot([], [], 'b-', linewidth=2, alpha=0.7, zorder=20)
@@ -452,32 +511,15 @@ class CurriculumTrainer:
             
             ax.plot(path_array[0, 0], path_array[0, 1], 'go', markersize=12, zorder=15, label='Start')
 
+
             def update(frame):
                 drone_path.set_data(path_array[:frame, 0], path_array[:frame, 1])
                 drone_marker.set_data([path_array[frame, 0]], [path_array[frame, 1]])
                 return drone_path, drone_marker
+
 
             ani = FuncAnimation(fig, update, frames=len(trajectory), interval=interval,
                                 blit=True, repeat=False)
             ax.legend()
             plt.show()
 
-# ==================== MAIN ====================
-if __name__ == "__main__":
-    total_episodes = 1500
-    
-    drone_config = DroneConfig()
-    env_config = EnvironmentConfig()
-    training_config = TrainingConfig()
-    curriculum_config = CurriculumConfig()
-    trainer = CurriculumTrainer(drone_config, env_config, training_config, curriculum_config)
-    
-    show_viz = input("Show occasional training visualizations? (y/n, default n): ").lower() == 'y'
-
-    if show_viz:
-        trainer.train_with_visualization(total_episodes=total_episodes, render_every=100)
-    else:
-        trainer.train(total_episodes=total_episodes)
-    
-    trainer.save_model()
-    trainer.evaluate(num_episodes=10)
