@@ -93,4 +93,4 @@ To address these challenges, the following changes were implemented:
 
 ## License
 
-This project is released under the MIT License. See [LICENSE](LICENSE) for details.
+
