@@ -1,31 +1,37 @@
-# Change this line in watch_drone.py
-from drone_lib import DroneConfig, EnvironmentConfig, TrainingConfig, CurriculumConfig, CurriculumTrainer
 import os
+from drone_lib import DroneConfig, EnvironmentConfig, TrainingConfig, CurriculumConfig, CurriculumTrainer
 
+def select_model(models_dir="models"):
+    # List all .pth files in the models directory
+    files = [f for f in os.listdir(models_dir) if f.endswith(".pth")]
+    if not files:
+        print(f"No model files found in '{models_dir}'")
+        exit(1)
 
-# --- Create the trainer instance ---
-# These classes are imported from drone_lib.py
-drone_config = DroneConfig()
-env_config = EnvironmentConfig()
-training_config = TrainingConfig()
-curriculum_config = CurriculumConfig()
-trainer = CurriculumTrainer(drone_config, env_config, training_config, curriculum_config)
+    print("Available models:")
+    for i, fname in enumerate(files, start=1):
+        print(f"  {i}. {fname}")
 
+    # Prompt until valid selection
+    while True:
+        choice = input(f"Enter model number (1–{len(files)}): ").strip()
+        if choice.isdigit():
+            idx = int(choice)
+            if 1 <= idx <= len(files):
+                return os.path.join(models_dir, files[idx - 1])
+        print("Invalid choice, please try again.")
 
-# --- Define the model path ---
-model_path = "models/drone_navigation_balanced.pth"
+if __name__ == "__main__":
+    model_path = select_model()
 
+    drone_config = DroneConfig()
+    env_config = EnvironmentConfig()
+    training_config = TrainingConfig()
+    curriculum_config = CurriculumConfig()
+    trainer = CurriculumTrainer(drone_config, env_config, training_config, curriculum_config)
 
-# --- Load the trained model ---
-if os.path.exists(model_path):
-    print(f"✅ Loading balanced model from {model_path}")
+    print(f"\n✅ Loading model from {model_path}")
     trainer.agent.load(model_path)
-    
-    # --- Watch the drone in action ---
-    print("\n🎬 Starting balanced navigation animation!")
-    # This will now call the fully implemented animation method
-    trainer.animate_episode(num_episodes=10, interval=40) 
-else:
-    print(f"❌ Model not found at {model_path}.")
-    print("Please run 'python3 drone_nav.py' to train the model first.")
 
+    print("\n🎬 Starting navigation animation!")
+    trainer.animate_episode(num_episodes=10, interval=40)

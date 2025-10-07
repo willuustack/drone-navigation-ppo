@@ -1,48 +1,41 @@
-# In resume_training.py
-
-from drone_lib import *
-import os
 import sys
+import os
+from drone_lib import *
 
-# --- Configuration (must match the "Balanced" settings) ---
+# Accept model name from command line (default remains the balanced file)
+model_name = sys.argv[1] if len(sys.argv) > 1 else "drone_navigation_balanced.pth"
+model_path = os.path.join("models", model_name)
+
+# Build trainer
 drone_config = DroneConfig()
 env_config = EnvironmentConfig()
 training_config = TrainingConfig()
 curriculum_config = CurriculumConfig()
 trainer = CurriculumTrainer(drone_config, env_config, training_config, curriculum_config)
 
-# --- Define the model path ---
-model_path = "models/drone_navigation_balanced.pth"
-
-# --- Load the saved model ---
+# Load checkpoint
 if os.path.exists(model_path):
     print(f"✅ Found saved model at {model_path}. Resuming training...")
     trainer.agent.load(model_path)
 else:
-    # This is a safety check. If the model doesn't exist, we can't resume.
     print(f"❌ ERROR: Model not found at {model_path}. Cannot resume training.")
-    print("Please run 'python3 drone_nav.py' to perform the initial training first.")
-    sys.exit() # Exit the script if there's nothing to resume.
+    print("Please run 'python drone_nav.py' to perform the initial training first.")
+    sys.exit(1)
 
-# --- Continue Training ---
-# Let's train for another 750 episodes to master Stage 2 & 3
+# Continue training
 additional_episodes = 50000
 print(f"\n🚀 Continuing training for an additional {additional_episodes} episodes...")
-
-# Ask the user if they want to see visualizations
 show_viz = input("Show occasional training visualizations? (y/n, default n): ").lower() == 'y'
-
 if show_viz:
-    # This method now exists in your updated drone_nav.py
     trainer.train_with_visualization(total_episodes=additional_episodes, render_every=100)
 else:
-    # The standard, faster training method
     trainer.train(total_episodes=additional_episodes)
 
-# --- Save the improved model ---
-# This saves the newly refined model back to the same file
-trainer.save_model()
+# Save updated policy (ask user for a filename)
+save_name = input("Enter filename to save improved model (default: drone_navigation_balanced.pth): ").strip()
+if not save_name:
+    save_name = "drone_navigation_balanced.pth"
+trainer.save_model(save_name)
 
-# --- Evaluate the final, improved model ---
 print("\n📊 Evaluating the newly improved model...")
 trainer.evaluate(num_episodes=10)
