@@ -1,6 +1,6 @@
 """
-Autonomous Multi-Goal Drone Navigation - V1.1
-PPO + Curriculum Learning with enhanced reward shaping and hyperparameter tuning.
+Autonomous Multi-Goal Drone Navigation - V1.2 Conservative
+PPO + Curriculum Learning with conservative hyperparameters for stable training.
 """
 
 import numpy as np
@@ -51,17 +51,17 @@ class EnvironmentConfig:
 
 @dataclass
 class TrainingConfig:
-    # Enhanced hyperparameters for better performance
-    learning_rate: float = 3e-4  # Increased for faster learning
-    gamma: float = 0.995  # Increased for longer horizon
-    gae_lambda: float = 0.98  # Increased from 0.95
+    # Conservative hyperparameters for stable training
+    learning_rate: float = 1e-4  # Back to conservative value
+    gamma: float = 0.99  # Standard discount
+    gae_lambda: float = 0.95  # Standard GAE
     clip_epsilon: float = 0.2
-    entropy_coef: float = 0.01  # Increased for more exploration
+    entropy_coef: float = 0.001  # Much lower entropy for less randomness
     value_loss_coef: float = 0.5
     max_grad_norm: float = 0.5
-    ppo_epochs: int = 4  # Reduced to prevent overfitting
-    batch_size: int = 128  # Increased for better gradient estimates
-    buffer_size: int = 4096  # Increased for more diverse experience
+    ppo_epochs: int = 10  # Back to more epochs for stability
+    batch_size: int = 64  # Conservative batch size
+    buffer_size: int = 2048  # Conservative buffer
 
 @dataclass
 class CurriculumConfig:
@@ -69,14 +69,12 @@ class CurriculumConfig:
 
     def __post_init__(self):
         if self.stages is None:
-            # Smoother curriculum progression
+            # Slower progression for better learning
             self.stages = [
-                {"num_obstacles": 1, "max_speed": 1.5, "num_goals": 2},  # Start easier
                 {"num_obstacles": 2, "max_speed": 1.8, "num_goals": 3},
                 {"num_obstacles": 3, "max_speed": 2.0, "num_goals": 3},
                 {"num_obstacles": 4, "max_speed": 2.2, "num_goals": 4},
-                {"num_obstacles": 5, "max_speed": 2.3, "num_goals": 4},
-                {"num_obstacles": 6, "max_speed": 2.5, "num_goals": 5},  # Final stage
+                {"num_obstacles": 5, "max_speed": 2.5, "num_goals": 5},
             ]
 
 # ==================== ENVIRONMENT ====================
@@ -206,44 +204,35 @@ class DroneNavigationEnv(gym.Env):
             current_goal = self.goals[self.current_goal_idx]
             dist_to_goal = np.linalg.norm(current_goal - self.drone_pos)
 
-            # Enhanced reward shaping
+            # Conservative reward shaping - back to original balanced approach
             if len(self.position_history) >= 2:
                 prev_dist = np.linalg.norm(current_goal - self.position_history[-2])
-                reward += (prev_dist - dist_to_goal) * 20.0  # Increased from 10.0
+                reward += (prev_dist - dist_to_goal) * 10.0  # Back to original multiplier
 
-            # Enhanced velocity alignment bonus
+            # Simple directional alignment
             vel_norm = np.linalg.norm(self.drone_vel)
             if vel_norm > 1e-4:
                 vel_dir = self.drone_vel / vel_norm
                 to_goal_dir = (current_goal - self.drone_pos) / dist_to_goal
                 alignment = np.dot(vel_dir, to_goal_dir)
-                reward += alignment * 8.0  # Increased from 5.0
+                reward += alignment * 5.0  # Back to original multiplier
 
-            # Speed bonus for efficient movement
-            optimal_speed = min(2.0, dist_to_goal * 2.0)
-            speed_efficiency = 1.0 - abs(vel_norm - optimal_speed) / self.drone_config.max_speed
-            reward += speed_efficiency * 3.0
-
-            # Goal reaching rewards
+            # Goal reaching rewards - keep enhanced
             if dist_to_goal < self.env_config.goal_reach_threshold:
                 if not self.goals_visited[self.current_goal_idx]:
-                    reward += 100.0  # Increased from 50.0
+                    reward += 50.0  # Back to original
                     self.goals_visited[self.current_goal_idx] = True
 
-                    # Progressive bonus for multiple goals
-                    goals_completed = sum(self.goals_visited)
-                    reward += goals_completed * 25.0  # Bonus scaling
-
                     if all(self.goals_visited):
-                        reward += 200.0  # Increased from 100.0
+                        reward += 100.0  # Back to original
                         terminated = True
 
-            # Reduced time penalty for longer episodes
-            reward -= 0.1  # Reduced from 0.2
+            # Conservative penalties
+            reward -= 0.2  # Back to original time penalty
 
-            # Smoothness reward (reduce jerkiness)
+            # Light smoothness penalty
             accel_change = np.linalg.norm(acceleration - self.prev_acceleration)
-            reward -= accel_change * 0.02  # Reduce penalty
+            reward -= accel_change * 0.05  # Back to original
             self.prev_acceleration = acceleration.copy()
 
         if self.steps >= self.max_steps:
@@ -253,10 +242,10 @@ class DroneNavigationEnv(gym.Env):
 
 # ==================== PPO AGENT ====================
 
-# Legacy ActorCritic for backward compatibility with old models
-class LegacyActorCritic(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim=256):
+class ActorCritic(nn.Module):
+    def __init__(self, state_dim, action_dim, hidden_dim=256):  # Back to 256
         super().__init__()
+        # Simple but effective architecture
         self.actor = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
             nn.ReLU(),
@@ -264,6 +253,7 @@ class LegacyActorCritic(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, action_dim)
         )
+
         self.critic = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
             nn.ReLU(),
@@ -271,48 +261,12 @@ class LegacyActorCritic(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, 1)
         )
+
         self.log_std = nn.Parameter(torch.zeros(action_dim))
 
     def forward(self, state):
         value = self.critic(state)
         mu = self.actor(state)
-        std = torch.exp(self.log_std)
-        dist = Normal(mu, std)
-        return dist, value
-
-# New Enhanced ActorCritic for better performance
-class ActorCritic(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim=512):  # Increased from 256
-        super().__init__()
-        # Shared feature extractor
-        self.shared = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(0.1),  # Add dropout for regularization
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(0.1)
-        )
-
-        # Separate heads for actor and critic
-        self.actor = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, action_dim)
-        )
-
-        self.critic = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, 1)
-        )
-
-        self.log_std = nn.Parameter(torch.zeros(action_dim))
-
-    def forward(self, state):
-        features = self.shared(state)
-        value = self.critic(features)
-        mu = self.actor(features)
         std = torch.exp(self.log_std)
         dist = Normal(mu, std)
         return dist, value
@@ -373,7 +327,7 @@ class PPOAgent:
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        # PPO updates - Fixed gradient issue
+        # PPO updates
         for epoch in range(self.config.ppo_epochs):
             # Get fresh forward pass for each epoch
             dist, curr_values = self.policy(states)
@@ -384,12 +338,12 @@ class PPOAgent:
             entropy = dist.entropy().sum(dim=1).mean()
 
             # Compute ratio and losses
-            ratio = torch.exp(new_log_probs - old_log_probs.detach())  # Detach old_log_probs
-            surr1 = ratio * advantages.detach()  # Detach advantages
+            ratio = torch.exp(new_log_probs - old_log_probs.detach())
+            surr1 = ratio * advantages.detach()
             surr2 = torch.clamp(ratio, 1 - self.config.clip_epsilon, 1 + self.config.clip_epsilon) * advantages.detach()
             actor_loss = -torch.min(surr1, surr2).mean()
 
-            critic_loss = nn.functional.mse_loss(curr_values, returns.detach())  # Detach returns
+            critic_loss = nn.functional.mse_loss(curr_values, returns.detach())
             total_loss = actor_loss + self.config.value_loss_coef * critic_loss - self.config.entropy_coef * entropy
 
             # Backward pass
@@ -405,47 +359,7 @@ class PPOAgent:
         torch.save(self.policy.state_dict(), path)
 
     def load(self, path):
-        try:
-            # Try loading with new architecture first
-            self.policy.load_state_dict(torch.load(path, map_location=self.device))
-            print("✅ Loaded model with enhanced architecture")
-        except (RuntimeError, KeyError) as e:
-            print("⚠️  Model architecture mismatch. Trying legacy compatibility...")
-            try:
-                # Create legacy model and load old weights
-                state_dim = self.policy.shared[0].in_features
-                action_dim = self.policy.log_std.shape[0]
-                legacy_policy = LegacyActorCritic(state_dim, action_dim).to(self.device)
-                legacy_policy.load_state_dict(torch.load(path, map_location=self.device))
-
-                # Transfer weights to new architecture
-                self._transfer_weights(legacy_policy)
-                print("✅ Successfully transferred legacy model to enhanced architecture")
-            except Exception as transfer_error:
-                print(f"❌ Failed to load model: {transfer_error}")
-                raise transfer_error
-
-    def _transfer_weights(self, legacy_policy):
-        """Transfer weights from legacy model to new enhanced architecture"""
-        with torch.no_grad():
-            # Transfer shared layer weights (from legacy actor first layers)
-            self.policy.shared[0].weight.copy_(legacy_policy.actor[0].weight)
-            self.policy.shared[0].bias.copy_(legacy_policy.actor[0].bias)
-            self.policy.shared[3].weight.copy_(legacy_policy.actor[2].weight)
-            self.policy.shared[3].bias.copy_(legacy_policy.actor[2].bias)
-
-            # Transfer actor head weights (from legacy actor last layer)
-            self.policy.actor[1].weight.copy_(legacy_policy.actor[4].weight)
-            self.policy.actor[1].bias.copy_(legacy_policy.actor[4].bias)
-
-            # Transfer critic head weights (from legacy critic last layer)
-            self.policy.critic[1].weight.copy_(legacy_policy.critic[4].weight)
-            self.policy.critic[1].bias.copy_(legacy_policy.critic[4].bias)
-
-            # Transfer log_std parameter
-            self.policy.log_std.copy_(legacy_policy.log_std)
-
-            print("🔄 Transferred weights from legacy to enhanced architecture")
+        self.policy.load_state_dict(torch.load(path, map_location=self.device))
 
 # ==================== TRAINING SYSTEM ====================
 
@@ -487,8 +401,8 @@ class CurriculumTrainer:
         ax.grid(True)
         plt.show()
 
-    def train_with_visualization(self, total_episodes=3000, eval_interval=10, render_every=100):
-        print("🚀 Starting Enhanced Training Loop with Visualization...")
+    def train_with_visualization(self, total_episodes=1500, eval_interval=10, render_every=100):
+        print("🚀 Starting Training Loop with Visualization...")
         recent_successes = []
         current_stage = 0
         self.apply_curriculum_stage(current_stage)
@@ -526,15 +440,15 @@ class CurriculumTrainer:
                 success_rate = np.mean(recent_successes)
                 print(f"📊 Episode {episode}/{total_episodes} | Stage: {current_stage+1} | Avg Reward: {avg_reward:.2f} | Success Rate: {success_rate:.1%}")
 
-            # More frequent and stricter curriculum advancement
-            if episode % 50 == 0 and len(recent_successes) >= 50 and np.mean(recent_successes[-50:]) > 0.85:
+            # Conservative curriculum advancement - require higher success rate and more episodes
+            if episode % 100 == 0 and len(recent_successes) >= 100 and np.mean(recent_successes[-100:]) > 0.90:
                 if current_stage < len(self.curriculum_config.stages) - 1:
                     current_stage += 1
                     self.apply_curriculum_stage(current_stage)
                     recent_successes = []
 
-    def train(self, total_episodes=3000, eval_interval=10):
-        print("🚀 Starting Enhanced Training Loop...")
+    def train(self, total_episodes=1500, eval_interval=10):
+        print("🚀 Starting Training Loop...")
         recent_successes = []
         current_stage = 0
         self.apply_curriculum_stage(current_stage)
@@ -566,8 +480,8 @@ class CurriculumTrainer:
                 success_rate = np.mean(recent_successes) if recent_successes else 0.0
                 print(f"📊 Episode {episode}/{total_episodes} | Stage: {current_stage+1} | Avg Reward: {avg_reward:.2f} | Success Rate: {success_rate:.1%}")
 
-            # More frequent and stricter curriculum advancement
-            if episode % 50 == 0 and len(recent_successes) >= 50 and np.mean(recent_successes[-50:]) > 0.85:
+            # Conservative curriculum advancement
+            if episode % 100 == 0 and len(recent_successes) >= 100 and np.mean(recent_successes[-100:]) > 0.90:
                 if current_stage < len(self.curriculum_config.stages) - 1:
                     current_stage += 1
                     self.apply_curriculum_stage(current_stage)
@@ -577,7 +491,7 @@ class CurriculumTrainer:
         os.makedirs("models", exist_ok=True)
         save_path = os.path.join("models", model_name)
         self.agent.save(save_path)
-        print(f"\n💾 Enhanced model saved to {save_path}")
+        print(f"\n💾 Conservative model saved to {save_path}")
 
     def evaluate(self, num_episodes=5, render=False):
         print(f"\n📊 Evaluating for {num_episodes} episodes...")
@@ -623,7 +537,7 @@ class CurriculumTrainer:
 
             # Create animation
             fig, ax = plt.subplots(figsize=(8, 8))
-            ax.set_title(f"Enhanced Drone Navigation - Episode {ep + 1}")
+            ax.set_title(f"Drone Navigation - Episode {ep + 1}")
             ax.set_xlim(0, self.env.env_config.map_size[0])
             ax.set_ylim(0, self.env.env_config.map_size[1])
             ax.set_aspect('equal', adjustable='box')
